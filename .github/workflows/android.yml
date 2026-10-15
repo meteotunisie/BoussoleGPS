@@ -62,9 +62,12 @@ jobs:
               <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
               <application
                   android:label="@string/app_name"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher"
                   android:theme="@style/AppTheme"
                   android:allowBackup="true">
-                  <activity android:name=".MainActivity" android:exported="true">
+                  <activity android:name=".MainActivity" android:exported="true"
+                      android:screenOrientation="portrait">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
@@ -104,6 +107,34 @@ jobs:
               <color name="accent">#FF6B6B</color>
               <color name="muted">#8A9099</color>
           </resources>
+          BOUSSOLE_EOF
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_launcher_background.xml <<'BOUSSOLE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#12263F" android:pathData="M0,0h108v108h-108z"/>
+              <path android:fillColor="#1C3D63" android:pathData="M54,54m-42,0a42,42 0 1,0 84,0a42,42 0 1,0 -84,0"/>
+          </vector>
+          BOUSSOLE_EOF
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_launcher_foreground.xml <<'BOUSSOLE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+              <path android:strokeColor="#FFFFFF" android:strokeWidth="2.5" android:pathData="M54,54m-27,0a27,27 0 1,0 54,0a27,27 0 1,0 -54,0"/>
+              <path android:fillColor="#FF5252" android:pathData="M54,26L63,54L45,54Z"/>
+              <path android:fillColor="#FFFFFF" android:pathData="M63,54L54,82L45,54Z"/>
+              <path android:fillColor="#12263F" android:pathData="M54,54m-3.5,0a3.5,3.5 0 1,0 7,0a3.5,3.5 0 1,0 -7,0"/>
+          </vector>
+          BOUSSOLE_EOF
+          mkdir -p app/src/main/res/mipmap-anydpi-v26
+          cat > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'BOUSSOLE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background"/>
+              <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+          </adaptive-icon>
           BOUSSOLE_EOF
           mkdir -p app/src/main/java/com/boussolgps/app
           cat > app/src/main/java/com/boussolgps/app/CompassView.kt <<'BOUSSOLE_EOF'
@@ -147,7 +178,7 @@ jobs:
                           cx + (sx - cx) * (r * 0.97f - len), cy + (sy - cy) * (r * 0.97f - len), p)
                   }
                   p.style = Paint.Style.FILL; p.textAlign = Paint.Align.CENTER
-                  p.textSize = r * 0.2f; p.typeface = Typeface.DEFAULT_BOLD
+                  p.textSize = r * 0.26f; p.typeface = Typeface.DEFAULT_BOLD
                   val labels = arrayOf("N" to 0, "E" to 90, "S" to 180, "O" to 270)
                   for ((t, a) in labels) {
                       val rad = Math.toRadians(a.toDouble())
@@ -156,16 +187,21 @@ jobs:
                       p.color = if (t == "N") cAccent else cFg
                       c.drawText(t, lx, ly, p)
                   }
+                  p.textSize = r * 0.1f; p.color = cMuted
+                  for ((t, a) in listOf("NE" to 45, "SE" to 135, "SO" to 225, "NO" to 315)) {
+                      val rad = Math.toRadians(a.toDouble())
+                      c.drawText(t, cx + sin(rad).toFloat() * r * 0.74f, cy - cos(rad).toFloat() * r * 0.74f + p.textSize * 0.35f, p)
+                  }
                   c.save(); c.rotate(heading, cx, cy)
+                  val w = r * 0.16f
                   path.reset()
-                  val w = r * 0.14f
-                  path.moveTo(cx, cy - r * 0.6f)
-                  path.lineTo(cx + w, cy + r * 0.15f)
-                  path.lineTo(cx, cy + r * 0.03f)
-                  path.lineTo(cx - w, cy + r * 0.15f)
-                  path.close()
+                  path.moveTo(cx, cy - r * 0.62f); path.lineTo(cx + w, cy); path.lineTo(cx - w, cy); path.close()
                   p.color = if (active) cAccent else cMuted
                   c.drawPath(path, p)
+                  path.reset()
+                  path.moveTo(cx + w, cy); path.lineTo(cx, cy + r * 0.42f); path.lineTo(cx - w, cy); path.close()
+                  p.color = cFg; p.alpha = 90
+                  c.drawPath(path, p); p.alpha = 255
                   c.restore()
                   p.color = cFg; c.drawCircle(cx, cy, r * 0.04f, p)
               }
@@ -177,7 +213,18 @@ jobs:
           
           import android.Manifest
           import android.app.Activity
+          import android.content.ClipData
+          import android.content.ClipboardManager
+          import android.content.Intent
           import android.content.pm.PackageManager
+          import android.hardware.GeomagneticField
+          import android.hardware.Sensor
+          import android.hardware.SensorEvent
+          import android.hardware.SensorEventListener
+          import android.hardware.SensorManager
+          import android.widget.Toast
+          import android.graphics.Typeface
+          import android.graphics.drawable.GradientDrawable
           import android.location.Location
           import android.location.LocationListener
           import android.location.LocationManager
@@ -186,6 +233,10 @@ jobs:
           import android.os.Looper
           import android.util.TypedValue
           import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.view.WindowManager
+          import android.widget.FrameLayout
           import android.widget.LinearLayout
           import android.widget.ScrollView
           import android.widget.TextView
@@ -197,10 +248,16 @@ jobs:
           class MainActivity : Activity(), LocationListener {
               private lateinit var lm: LocationManager
               private lateinit var compass: CompassView
+              private lateinit var sunDial: CompassView
               private lateinit var tvHeading: TextView
               private lateinit var tvState: TextView
               private lateinit var tvInfo: TextView
-              private lateinit var tvSun: TextView
+              private lateinit var tvSunMain: TextView
+              private lateinit var tvSunHelp: TextView
+              private lateinit var pages: List<View>
+              private lateinit var tabs: List<TextView>
+              private var cFg = 0
+              private var cAccent = 0
           
               private val handler = Handler(Looper.getMainLooper())
               private var last: Location? = null
@@ -211,175 +268,115 @@ jobs:
               private var moving = false
               private var speedMs = 0f
               private var running = false
+              private lateinit var sm: SensorManager
+              private var rotSensor: Sensor? = null
+              private var sensorHeading = Float.NaN
+              private var sensorAcc = 3
+              private var decl = 0f
+              private lateinit var tvPos: TextView
+              private val sensorListener = object : SensorEventListener {
+                  private val r = FloatArray(9)
+                  private val r2 = FloatArray(9)
+                  private val o = FloatArray(3)
+                  override fun onSensorChanged(e: SensorEvent) {
+                      SensorManager.getRotationMatrixFromVector(r, e.values)
+                      SensorManager.getOrientation(r, o)
+                      var mtx = r
+                      if (abs(Math.toDegrees(o[1].toDouble())) > 50) {
+                          SensorManager.remapCoordinateSystem(r, SensorManager.AXIS_X, SensorManager.AXIS_Z, r2)
+                          mtx = r2
+                      }
+                      SensorManager.getOrientation(mtx, o)
+                      var h = Math.toDegrees(o[0].toDouble()).toFloat() + decl
+                      h = (h + 720f) % 360f
+                      sensorHeading = if (sensorHeading.isNaN()) h else {
+                          val dd = ((h - sensorHeading + 540f) % 360f) - 180f
+                          (sensorHeading + dd * 0.15f + 360f) % 360f
+                      }
+                      sensorAcc = e.accuracy
+                  }
+                  override fun onAccuracyChanged(s: Sensor?, a: Int) { sensorAcc = a }
+              }
           
               private val ticker = object : Runnable {
                   override fun run() { refresh(); handler.postDelayed(this, 1000) }
               }
           
+              private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+          
               override fun onCreate(b: Bundle?) {
                   super.onCreate(b)
                   lm = getSystemService(LOCATION_SERVICE) as LocationManager
-                  val bg = getColor(R.color.bg); val fg = getColor(R.color.fg)
+                  sm = getSystemService(SENSOR_SERVICE) as SensorManager
+                  rotSensor = sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+                  val bg = getColor(R.color.bg); cFg = getColor(R.color.fg); cAccent = getColor(R.color.accent)
+                  val dial = getColor(R.color.dial); val muted = getColor(R.color.muted)
+          
+                  tvHeading = tv(56, true, cFg)
+                  compass = CompassView(this).apply { cDial = dial; cFg = this@MainActivity.cFg; cAccent = this@MainActivity.cAccent; cMuted = muted }
+                  tvState = tv(24, true, 0xFFFFFFFF.toInt()).apply { setPadding(dp(16), dp(12), dp(16), dp(12)) }
+                  tvInfo = tv(20, false, cFg).apply { gravity = Gravity.START }
+                  val p1 = page(tvHeading, compass, tvState, tvInfo)
+          
+                  sunDial = CompassView(this).apply { cDial = dial; cFg = this@MainActivity.cFg; cAccent = 0xFFF9A825.toInt(); cMuted = muted }
+                  tvSunMain = tv(24, true, cFg)
+                  tvSunHelp = tv(20, false, cFg).apply { gravity = Gravity.START }
+                  val p2 = page(sunDial, tvSunMain, tvSunHelp)
+          
+                  val help = "Comment \u00e7a marche\n\n" +
+                      "BOUSSOLE : si votre t\u00e9l\u00e9phone a un capteur magn\u00e9tique, la boussole marche en direct, m\u00eame \u00e0 l'arr\u00eat. Sinon, l'application utilise le GPS : quand vous marchez ou roulez, la fl\u00e8che montre votre direction de d\u00e9placement. \u00c0 l'arr\u00eat, elle garde la derni\u00e8re direction connue.\n\n" +
+                      "SOLEIL : fonctionne sans bouger, m\u00eame \u00e0 l'int\u00e9rieur pr\u00e8s d'une fen\u00eatre, gr\u00e2ce \u00e0 l'heure et \u00e0 votre position. Elle indique o\u00f9 est le Soleil, donc o\u00f9 est le nord par rapport \u00e0 lui.\n\n" +
+                      "Aucune m\u00e9thode ne peut mesurer l'orientation du t\u00e9l\u00e9phone \u00e0 l'arr\u00eat sans capteur : le mode Soleil est approximatif.\n\n" +
+                      "Ne regardez jamais le Soleil directement."
+                  val p3 = page(tv(20, false, cFg).apply { gravity = Gravity.START; text = help })
+          
+                  tvPos = tv(20, false, cFg).apply { gravity = Gravity.START }
+                  val p4 = page(tvPos, btn("Partager ma position") { sharePos() }, btn("Copier les coordonn\u00e9es") { copyPos() })
+                  pages = listOf(p1, p2, p4, p3)
+                  val content = FrameLayout(this)
+                  pages.forEach { content.addView(it) }
+                  val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(dial) }
+                  tabs = listOf("Boussole", "Soleil", "Position", "Aide").mapIndexed { i, t ->
+                      tv(16, true, cFg).apply {
+                          text = t; setPadding(0, dp(18), 0, dp(18)); setOnClickListener { show(i) }
+                      }
+                  }
+                  tabs.forEach { bar.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
                   val root = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL; setBackgroundColor(bg)
-                      setPadding(24, 24, 24, 24); gravity = Gravity.CENTER_HORIZONTAL
+                      addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+                      addView(bar)
                   }
-                  tvHeading = tv(56, true, fg)
-                  compass = CompassView(this).apply {
-                      cDial = getColor(R.color.dial); cFg = fg
-                      cAccent = getColor(R.color.accent); cMuted = getColor(R.color.muted)
+                  setContentView(root)
+                  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                  window.statusBarColor = bg; window.navigationBarColor = dial
+                  show(0); refresh()
+              }
+          
+              private fun btn(label: String, onClick: () -> Unit) = tv(20, true, 0xFFFFFFFF.toInt()).apply {
+                  text = label
+                  setPadding(dp(16), dp(16), dp(16), dp(16))
+                  background = GradientDrawable().apply { cornerRadius = dp(16).toFloat(); setColor(cAccent) }
+                  setOnClickListener { onClick() }
+                  layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                      ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
+              }
+          
+              private fun posText(): String? {
+                  val l = anyLoc() ?: return null
+                  return String.format(Locale.US, "%.6f,%.6f", l.latitude, l.longitude)
+              }
+          
+              private fun sharePos() {
+                  val p = posText()
+                  if (p == null) { Toast.makeText(this, "Position indisponible", Toast.LENGTH_SHORT).show(); return }
+                  val i = Intent(Intent.ACTION_SEND).apply {
+                      type = "text/plain"
+                      putExtra(Intent.EXTRA_TEXT, "Ma position : https://maps.google.com/?q=" + p)
                   }
-                  tvState = tv(24, true, getColor(R.color.accent))
-                  tvInfo = tv(20, false, fg).apply { gravity = Gravity.START }
-                  tvSun = tv(16, false, getColor(R.color.muted))
-                  root.addView(tvHeading); root.addView(compass)
-                  root.addView(tvState); root.addView(tvInfo); root.addView(tvSun)
-                  setContentView(ScrollView(this).apply { setBackgroundColor(bg); addView(root) })
-                  window.statusBarColor = bg; window.navigationBarColor = bg
-                  refresh()
+                  startActivity(Intent.createChooser(i, "Partager"))
               }
           
-              private fun tv(sp: Int, bold: Boolean, color: Int) = TextView(this).apply {
-                  setTextSize(TypedValue.COMPLEX_UNIT_SP, sp.toFloat()); setTextColor(color)
-                  gravity = Gravity.CENTER; setPadding(0, 12, 0, 12)
-                  if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
-              }
-          
-              override fun onResume() {
-                  super.onResume()
-                  if (hasPerm()) start()
-                  else requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,
-                      Manifest.permission.ACCESS_COARSE_LOCATION), 1)
-                  handler.post(ticker)
-              }
-          
-              override fun onPause() {
-                  super.onPause(); handler.removeCallbacks(ticker)
-                  if (running) { lm.removeUpdates(this); running = false }
-              }
-          
-              override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
-                  super.onRequestPermissionsResult(rc, p, r)
-                  if (hasPerm()) start() else refresh()
-              }
-          
-              private fun hasPerm() = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
-                  PackageManager.PERMISSION_GRANTED
-          
-              private fun start() {
-                  if (running) return
-                  try {
-                      lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this, Looper.getMainLooper())
-                      running = true
-                  } catch (e: Exception) { running = false }
-              }
-          
-              override fun onLocationChanged(loc: Location) {
-                  val before = last
-                  last = loc; lastFixMs = System.currentTimeMillis()
-                  speedMs = if (loc.hasSpeed() && loc.speed > 0f) loc.speed
-                      else if (before != null && loc.time > before.time &&
-                          before.distanceTo(loc) > max(3f, loc.accuracy))
-                          before.distanceTo(loc) / ((loc.time - before.time) / 1000f)
-                      else 0f
-                  moving = speedMs >= 0.7f
-                  var h = Float.NaN
-                  if (moving && loc.hasBearing() &&
-                      (!loc.hasBearingAccuracy() || loc.bearingAccuracyDegrees <= 30f)) {
-                      h = loc.bearing
-                      prev = loc
-                  } else if (moving) {
-                      val pv = prev
-                      if (pv == null) prev = loc
-                      else if (pv.distanceTo(loc) >= max(5f, loc.accuracy * 0.7f)) {
-                          h = pv.bearingTo(loc); prev = loc
-                      }
-                  }
-                  if (!h.isNaN()) {
-                      h = (h + 360f) % 360f
-                      knownHeading = h
-                      shown = if (shown.isNaN()) h else {
-                          val d = ((h - shown + 540f) % 360f) - 180f
-                          (shown + d * 0.3f + 360f) % 360f
-                      }
-                  }
-                  refresh()
-              }
-          
-              override fun onProviderEnabled(p: String) { refresh() }
-              override fun onProviderDisabled(p: String) { refresh() }
-              @Deprecated("Deprecated in Java")
-              override fun onStatusChanged(p: String?, s: Int, e: Bundle?) {}
-          
-              private fun dir(h: Float): String {
-                  val n = arrayOf("N", "NE", "E", "SE", "S", "SO", "O", "NO")
-                  return n[((h + 22.5f) / 45f).toInt() % 8]
-              }
-          
-              private fun refresh() {
-                  val l = last
-                  val age = if (lastFixMs == 0L) Long.MAX_VALUE else System.currentTimeMillis() - lastFixMs
-                  val gpsOn = lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
-                  val lost = age > 10000
-                  val signal = when {
-                      !hasPerm() -> "Autorisation GPS refus\u00e9e"
-                      !gpsOn -> "GPS d\u00e9sactiv\u00e9 : activez la localisation"
-                      l == null -> "Recherche du signal GPS\u2026"
-                      lost -> "Signal perdu"
-                      l.accuracy <= 15f -> "Bon"
-                      l.accuracy <= 40f -> "Moyen"
-                      else -> "Faible"
-                  }
-                  val live = moving && !lost && !shown.isNaN()
-                  if (!shown.isNaN()) compass.heading = shown
-                  compass.active = live
-                  tvHeading.text = if (knownHeading.isNaN()) "--\u00b0"
-                      else String.format(Locale.FRANCE, "%.0f\u00b0 %s", shown.takeIf { !it.isNaN() } ?: knownHeading, dir(knownHeading))
-                  tvState.text = when {
-                      knownHeading.isNaN() -> "Marchez pour obtenir la direction"
-                      live -> "En mouvement"
-                      else -> "\u00c0 l'arr\u00eat\nDerni\u00e8re direction connue"
-                  }
-                  val moveTxt = if (l == null || lost) "\u2014" else if (moving) "En mouvement" else "\u00c0 l'arr\u00eat"
-                  tvInfo.text = if (l == null) "Signal GPS : $signal" else String.format(Locale.FRANCE,
-                      "Latitude : %.5f\nLongitude : %.5f\nVitesse : %.1f km/h\nPr\u00e9cision : %.0f m\nCap : %s\nSignal GPS : %s\n\u00c9tat : %s",
-                      l.latitude, l.longitude, speedMs * 3.6f, l.accuracy,
-                      if (knownHeading.isNaN()) "--" else String.format(Locale.FRANCE, "%.0f\u00b0", knownHeading),
-                      signal, moveTxt)
-                  tvSun.text = if (l != null && !live) sunText(l) else ""
-              }
-          
-              // Azimut approximatif du Soleil (indicatif, +/- quelques degr\u00e9s)
-              private fun sunText(l: Location): String {
-                  val c = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
-                  val n = c.get(Calendar.DAY_OF_YEAR)
-                  val utc = c.get(Calendar.HOUR_OF_DAY) + c.get(Calendar.MINUTE) / 60.0
-                  val dec = Math.toRadians(23.45 * sin(Math.toRadians(360.0 / 365.0 * (284 + n))))
-                  val bb = Math.toRadians(360.0 / 365.0 * (n - 81))
-                  val eot = 9.87 * sin(2 * bb) - 7.53 * cos(bb) - 1.5 * sin(bb)
-                  val solar = utc + l.longitude / 15.0 + eot / 60.0
-                  val ha = Math.toRadians(15.0 * (solar - 12.0))
-                  val lat = Math.toRadians(l.latitude)
-                  val el = Math.toDegrees(asin(sin(lat) * sin(dec) + cos(lat) * cos(dec) * cos(ha)))
-                  if (el < 0) return "Soleil sous l'horizon (orientation indisponible)"
-                  val az = (Math.toDegrees(atan2(sin(ha), cos(ha) * sin(lat) - tan(dec) * cos(lat))) + 180 + 360) % 360
-                  return String.format(Locale.FRANCE,
-                      "Indication approximative (non mesur\u00e9e) : le Soleil est vers %.0f\u00b0 (%s). Si vous le voyez, ce cap est une estimation, pas une mesure.",
-                      az, dir(az.toFloat()))
-              }
-          }
-          BOUSSOLE_EOF
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 8.7
-      - run: gradle assembleDebug --no-daemon
-        env:
-          JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8
-      - uses: actions/upload-artifact@v4
-        with:
-          name: BoussoleGPS-APK
-          path: app/build/outputs/apk/debug/*.apk
+              private fun copyPos() {
+                  val p = posText()
+                  if (p == n
