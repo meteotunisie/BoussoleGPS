@@ -379,4 +379,221 @@ jobs:
           
               private fun copyPos() {
                   val p = posText()
-                  if (p == n
+                  if (p == null) { Toast.makeText(this, "Position indisponible", Toast.LENGTH_SHORT).show(); return }
+                  (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("position", p))
+                  Toast.makeText(this, "Coordonn\u00e9es copi\u00e9es", Toast.LENGTH_SHORT).show()
+              }
+          
+              private fun show(i: Int) {
+                  pages.forEachIndexed { j, v -> v.visibility = if (j == i) View.VISIBLE else View.GONE }
+                  tabs.forEachIndexed { j, t -> t.setTextColor(if (j == i) cAccent else cFg) }
+              }
+          
+              private fun page(vararg v: View): ScrollView {
+                  val col = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+                      setPadding(dp(12), dp(12), dp(12), dp(12))
+                  }
+                  v.forEach { col.addView(it) }
+                  return ScrollView(this).apply { addView(col) }
+              }
+          
+              private fun tv(sp: Int, bold: Boolean, color: Int) = TextView(this).apply {
+                  setTextSize(TypedValue.COMPLEX_UNIT_SP, sp.toFloat()); setTextColor(color)
+                  gravity = Gravity.CENTER; setPadding(0, 12, 0, 12)
+                  if (bold) setTypeface(typeface, Typeface.BOLD)
+              }
+          
+              override fun onResume() {
+                  super.onResume()
+                  if (hasPerm()) start()
+                  else requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,
+                      Manifest.permission.ACCESS_COARSE_LOCATION), 1)
+                  handler.post(ticker)
+                  rotSensor?.let { sm.registerListener(sensorListener, it, SensorManager.SENSOR_DELAY_UI) }
+              }
+          
+              override fun onPause() {
+                  super.onPause(); handler.removeCallbacks(ticker); sm.unregisterListener(sensorListener)
+                  if (running) { lm.removeUpdates(this); running = false }
+              }
+          
+              override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
+                  super.onRequestPermissionsResult(rc, p, r)
+                  if (hasPerm()) start() else refresh()
+              }
+          
+              private fun hasPerm() = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
+                  PackageManager.PERMISSION_GRANTED
+          
+              private fun start() {
+                  if (running) return
+                  var ok = false
+                  for (p in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
+                      try {
+                          if (lm.isProviderEnabled(p)) {
+                              lm.requestLocationUpdates(p, 1000L, 0f, this, Looper.getMainLooper())
+                              ok = true
+                          }
+                      } catch (e: Exception) {}
+                  }
+                  running = ok
+              }
+          
+              override fun onLocationChanged(loc: Location) {
+                  val cur = last
+                  if (cur != null && loc.provider == LocationManager.NETWORK_PROVIDER &&
+                      cur.provider == LocationManager.GPS_PROVIDER &&
+                      System.currentTimeMillis() - lastFixMs < 10000) return
+                  val before = last
+                  last = loc; lastFixMs = System.currentTimeMillis()
+                  speedMs = if (loc.hasSpeed() && loc.speed > 0f) loc.speed
+                      else if (before != null && loc.time > before.time &&
+                          before.distanceTo(loc) > max(3f, loc.accuracy))
+                          before.distanceTo(loc) / ((loc.time - before.time) / 1000f)
+                      else 0f
+                  moving = speedMs >= 0.5f
+                  var h = Float.NaN
+                  if (moving && loc.hasBearing() &&
+                      (!loc.hasBearingAccuracy() || loc.bearingAccuracyDegrees <= 30f)) {
+                      h = loc.bearing
+                      prev = loc
+                  } else if (moving) {
+                      val pv = prev
+                      if (pv == null) prev = loc
+                      else if (pv.distanceTo(loc) >= max(4f, loc.accuracy * 0.5f)) {
+                          h = pv.bearingTo(loc); prev = loc
+                      }
+                  }
+                  if (!h.isNaN()) {
+                      h = (h + 360f) % 360f
+                      knownHeading = h
+                      shown = if (shown.isNaN()) h else {
+                          val d = ((h - shown + 540f) % 360f) - 180f
+                          (shown + d * 0.3f + 360f) % 360f
+                      }
+                  }
+                  refresh()
+              }
+          
+              override fun onProviderEnabled(p: String) { start(); refresh() }
+              override fun onProviderDisabled(p: String) { refresh() }
+              @Deprecated("Deprecated in Java")
+              override fun onStatusChanged(p: String?, s: Int, e: Bundle?) {}
+          
+              private fun dir(h: Float): String {
+                  val n = arrayOf("N", "NE", "E", "SE", "S", "SO", "O", "NO")
+                  return n[((h + 22.5f) / 45f).toInt() % 8]
+              }
+          
+              private fun anyLoc(): Location? = last ?: try {
+                  lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                      ?: lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+              } catch (e: Exception) { null }
+          
+              private fun refresh() {
+                  val l = last
+                  anyLoc()?.let {
+                      decl = GeomagneticField(it.latitude.toFloat(), it.longitude.toFloat(), it.altitude.toFloat(), System.currentTimeMillis()).declination
+                  }
+                  val useSensor = rotSensor != null && !sensorHeading.isNaN()
+                  val age = if (lastFixMs == 0L) Long.MAX_VALUE else System.currentTimeMillis() - lastFixMs
+                  val gpsOn = lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
+                  val lost = age > 10000
+                  val signal = when {
+                      !hasPerm() -> "Autorisation GPS refus\u00e9e"
+                      !gpsOn && l == null -> "GPS d\u00e9sactiv\u00e9 : activez la localisation"
+                      l == null -> "Recherche du signal GPS\u2026"
+                      lost -> "Signal perdu"
+                      l.accuracy <= 15f -> "Bon"
+                      l.accuracy <= 40f -> "Moyen"
+                      else -> "Faible"
+                  }
+                  val src = if (l?.provider == LocationManager.NETWORK_PROVIDER) " (r\u00e9seau, approximatif)" else ""
+                  val live = moving && !lost && !shown.isNaN()
+                  if (useSensor) compass.heading = sensorHeading else if (!shown.isNaN()) compass.heading = shown
+                  compass.active = live || useSensor
+                  val chipColor = when {
+                      useSensor -> if (sensorAcc <= 1) 0xFFEF6C00.toInt() else 0xFF2E7D32.toInt()
+                      l == null || lost -> 0xFFC62828.toInt()
+                      live -> 0xFF2E7D32.toInt()
+                      else -> 0xFFEF6C00.toInt()
+                  }
+                  tvState.background = GradientDrawable().apply { cornerRadius = 48f; setColor(chipColor) }
+                  tvHeading.text = if (useSensor) String.format(Locale.FRANCE, "%.0f\u00b0 %s", sensorHeading, dir(sensorHeading)) else if (knownHeading.isNaN()) "--\u00b0"
+                      else String.format(Locale.FRANCE, "%.0f\u00b0 %s", shown.takeIf { !it.isNaN() } ?: knownHeading, dir(knownHeading))
+                  tvState.text = when {
+                      useSensor -> if (sensorAcc <= 1) "Boussole active\nCalibrez : faites un 8 avec le t\u00e9l\u00e9phone" else "Boussole active\n(capteur magn\u00e9tique)"
+                      l == null -> "Pas encore de signal\nUtilisez l'onglet Soleil"
+                      knownHeading.isNaN() -> "Marchez pour obtenir la direction"
+                      live -> "En mouvement"
+                      else -> "\u00c0 l'arr\u00eat\nDerni\u00e8re direction connue"
+                  }
+                  val moveTxt = if (l == null || lost) "\u2014" else if (moving) "En mouvement" else "\u00c0 l'arr\u00eat"
+                  tvInfo.text = if (l == null) "Signal GPS : $signal" else String.format(Locale.FRANCE,
+                      "Latitude : %.5f\nLongitude : %.5f\nVitesse : %.1f km/h\nPr\u00e9cision : %.0f m\nCap : %s\nSignal GPS : %s\n\u00c9tat : %s",
+                      l.latitude, l.longitude, speedMs * 3.6f, l.accuracy,
+                      if (knownHeading.isNaN()) "--" else String.format(Locale.FRANCE, "%.0f\u00b0", knownHeading),
+                      signal + src, moveTxt)
+                  val pl = anyLoc()
+                  tvPos.text = if (pl == null) "Position indisponible" else String.format(Locale.FRANCE,
+                      "Latitude : %.6f\nLongitude : %.6f\nAltitude : %.0f m\nPr\u00e9cision : %.0f m\nSource : %s",
+                      pl.latitude, pl.longitude, pl.altitude, pl.accuracy,
+                      if (pl.provider == LocationManager.GPS_PROVIDER) "GPS" else "r\u00e9seau")
+                  refreshSun()
+              }
+          
+              private fun sunPos(l: Location): DoubleArray {
+                  val c = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+                  val n = c.get(Calendar.DAY_OF_YEAR)
+                  val utc = c.get(Calendar.HOUR_OF_DAY) + c.get(Calendar.MINUTE) / 60.0
+                  val dec = Math.toRadians(23.45 * sin(Math.toRadians(360.0 / 365.0 * (284 + n))))
+                  val bb = Math.toRadians(360.0 / 365.0 * (n - 81))
+                  val eot = 9.87 * sin(2 * bb) - 7.53 * cos(bb) - 1.5 * sin(bb)
+                  val solar = utc + l.longitude / 15.0 + eot / 60.0
+                  val ha = Math.toRadians(15.0 * (solar - 12.0))
+                  val lat = Math.toRadians(l.latitude)
+                  val el = Math.toDegrees(asin(sin(lat) * sin(dec) + cos(lat) * cos(dec) * cos(ha)))
+                  val az = (Math.toDegrees(atan2(sin(ha), cos(ha) * sin(lat) - tan(dec) * cos(lat))) + 180 + 360) % 360
+                  return doubleArrayOf(az, el)
+              }
+          
+              private fun refreshSun() {
+                  val l = anyLoc()
+                  if (l == null) {
+                      sunDial.active = false
+                      tvSunMain.text = "Position indisponible"
+                      tvSunHelp.text = "Activez la localisation et patientez quelques instants. La position r\u00e9seau suffit, m\u00eame \u00e0 l'int\u00e9rieur."
+                      return
+                  }
+                  val (az, el) = sunPos(l).let { it[0] to it[1] }
+                  if (el < 0) {
+                      sunDial.active = false
+                      tvSunMain.text = "Le Soleil est couch\u00e9"
+                      tvSunHelp.text = "Pas de rep\u00e8re solaire pour le moment. Si le ciel est d\u00e9gag\u00e9 et que vous \u00eates dans l'h\u00e9misph\u00e8re nord, l'\u00e9toile Polaire indique le nord."
+                      return
+                  }
+                  sunDial.heading = az.toFloat(); sunDial.active = true
+                  tvSunMain.text = String.format(Locale.FRANCE, "Soleil au %s (%.0f\u00b0)\nHauteur : %.0f\u00b0", dir(az.toFloat()), az, el)
+                  val rel = (360 - az) % 360
+                  val side = if (rel <= 180) String.format(Locale.FRANCE, "%.0f\u00b0 sur votre droite", rel)
+                      else String.format(Locale.FRANCE, "%.0f\u00b0 sur votre gauche", 360 - rel)
+                  tvSunHelp.text = "1. Placez-vous face au Soleil (m\u00eame derri\u00e8re une vitre).\n2. Le nord est alors \u00e0 $side.\n\n" +
+                      "Indication approximative (non mesur\u00e9e). Ne regardez jamais le Soleil directement."
+              }
+          }
+          BOUSSOLE_EOF
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+      - run: gradle assembleDebug --no-daemon
+        env:
+          JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BoussoleGPS-APK
+          path: app/build/outputs/apk/debug/*.apk
