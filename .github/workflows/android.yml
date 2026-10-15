@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: CrÃ©er les fichiers du projet
+      - name: Creer les fichiers du projet
         run: |
           cat > settings.gradle.kts <<'BOUSSOLE_EOF'
           pluginManagement {
@@ -209,6 +209,7 @@ jobs:
               private var shown = Float.NaN
               private var knownHeading = Float.NaN
               private var moving = false
+              private var speedMs = 0f
               private var running = false
           
               private val ticker = object : Runnable {
@@ -274,9 +275,14 @@ jobs:
               }
           
               override fun onLocationChanged(loc: Location) {
+                  val before = last
                   last = loc; lastFixMs = System.currentTimeMillis()
-                  val speed = if (loc.hasSpeed()) loc.speed else 0f
-                  moving = speed >= 1.0f
+                  speedMs = if (loc.hasSpeed() && loc.speed > 0f) loc.speed
+                      else if (before != null && loc.time > before.time &&
+                          before.distanceTo(loc) > max(3f, loc.accuracy))
+                          before.distanceTo(loc) / ((loc.time - before.time) / 1000f)
+                      else 0f
+                  moving = speedMs >= 0.7f
                   var h = Float.NaN
                   if (moving && loc.hasBearing() &&
                       (!loc.hasBearingAccuracy() || loc.bearingAccuracyDegrees <= 30f)) {
@@ -285,7 +291,7 @@ jobs:
                   } else if (moving) {
                       val pv = prev
                       if (pv == null) prev = loc
-                      else if (pv.distanceTo(loc) >= max(8f, loc.accuracy)) {
+                      else if (pv.distanceTo(loc) >= max(5f, loc.accuracy * 0.7f)) {
                           h = pv.bearingTo(loc); prev = loc
                       }
                   }
@@ -316,9 +322,9 @@ jobs:
                   val gpsOn = lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
                   val lost = age > 10000
                   val signal = when {
-                      !hasPerm() -> "Autorisation GPS refusÃ©e"
-                      !gpsOn -> "GPS dÃ©sactivÃ© : activez la localisation"
-                      l == null -> "Recherche du signal GPSâ€¦"
+                      !hasPerm() -> "Autorisation GPS refus\u00e9e"
+                      !gpsOn -> "GPS d\u00e9sactiv\u00e9 : activez la localisation"
+                      l == null -> "Recherche du signal GPS\u2026"
                       lost -> "Signal perdu"
                       l.accuracy <= 15f -> "Bon"
                       l.accuracy <= 40f -> "Moyen"
@@ -327,23 +333,23 @@ jobs:
                   val live = moving && !lost && !shown.isNaN()
                   if (!shown.isNaN()) compass.heading = shown
                   compass.active = live
-                  tvHeading.text = if (knownHeading.isNaN()) "--Â°"
-                      else String.format(Locale.FRANCE, "%.0fÂ° %s", shown.takeIf { !it.isNaN() } ?: knownHeading, dir(knownHeading))
+                  tvHeading.text = if (knownHeading.isNaN()) "--\u00b0"
+                      else String.format(Locale.FRANCE, "%.0f\u00b0 %s", shown.takeIf { !it.isNaN() } ?: knownHeading, dir(knownHeading))
                   tvState.text = when {
                       knownHeading.isNaN() -> "Marchez pour obtenir la direction"
                       live -> "En mouvement"
-                      else -> "Ã€ l'arrÃªt\nDerniÃ¨re direction connue"
+                      else -> "\u00c0 l'arr\u00eat\nDerni\u00e8re direction connue"
                   }
-                  val moveTxt = if (l == null || lost) "â€”" else if (moving) "En mouvement" else "Ã€ l'arrÃªt"
+                  val moveTxt = if (l == null || lost) "\u2014" else if (moving) "En mouvement" else "\u00c0 l'arr\u00eat"
                   tvInfo.text = if (l == null) "Signal GPS : $signal" else String.format(Locale.FRANCE,
-                      "Latitude : %.5f\nLongitude : %.5f\nVitesse : %.1f km/h\nPrÃ©cision : %.0f m\nCap : %s\nSignal GPS : %s\nÃ‰tat : %s",
-                      l.latitude, l.longitude, (if (l.hasSpeed()) l.speed else 0f) * 3.6f, l.accuracy,
-                      if (knownHeading.isNaN()) "--" else String.format(Locale.FRANCE, "%.0fÂ°", knownHeading),
+                      "Latitude : %.5f\nLongitude : %.5f\nVitesse : %.1f km/h\nPr\u00e9cision : %.0f m\nCap : %s\nSignal GPS : %s\n\u00c9tat : %s",
+                      l.latitude, l.longitude, speedMs * 3.6f, l.accuracy,
+                      if (knownHeading.isNaN()) "--" else String.format(Locale.FRANCE, "%.0f\u00b0", knownHeading),
                       signal, moveTxt)
                   tvSun.text = if (l != null && !live) sunText(l) else ""
               }
           
-              // Azimut approximatif du Soleil (indicatif, +/- quelques degrÃ©s)
+              // Azimut approximatif du Soleil (indicatif, +/- quelques degr\u00e9s)
               private fun sunText(l: Location): String {
                   val c = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
                   val n = c.get(Calendar.DAY_OF_YEAR)
@@ -358,7 +364,7 @@ jobs:
                   if (el < 0) return "Soleil sous l'horizon (orientation indisponible)"
                   val az = (Math.toDegrees(atan2(sin(ha), cos(ha) * sin(lat) - tan(dec) * cos(lat))) + 180 + 360) % 360
                   return String.format(Locale.FRANCE,
-                      "Indication approximative (non mesurÃ©e) : le Soleil est vers %.0fÂ° (%s). Si vous le voyez, ce cap est une estimation, pas une mesure.",
+                      "Indication approximative (non mesur\u00e9e) : le Soleil est vers %.0f\u00b0 (%s). Si vous le voyez, ce cap est une estimation, pas une mesure.",
                       az, dir(az.toFloat()))
               }
           }
@@ -371,6 +377,8 @@ jobs:
         with:
           gradle-version: 8.7
       - run: gradle assembleDebug --no-daemon
+        env:
+          JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8
       - uses: actions/upload-artifact@v4
         with:
           name: BoussoleGPS-APK
