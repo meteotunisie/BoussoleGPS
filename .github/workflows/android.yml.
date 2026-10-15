@@ -1,0 +1,377 @@
+name: Build Boussole GPS APK
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: CrÃ©er les fichiers du projet
+        run: |
+          cat > settings.gradle.kts <<'BOUSSOLE_EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "Boussole"
+          include(":app")
+          BOUSSOLE_EOF
+          cat > build.gradle.kts <<'BOUSSOLE_EOF'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          BOUSSOLE_EOF
+          cat > gradle.properties <<'BOUSSOLE_EOF'
+          org.gradle.jvmargs=-Xmx2g
+          android.nonTransitiveRClass=true
+          BOUSSOLE_EOF
+          mkdir -p app
+          cat > app/build.gradle.kts <<'BOUSSOLE_EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.boussolgps.app"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.boussolgps.app"
+                  minSdk = 29
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          BOUSSOLE_EOF
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'BOUSSOLE_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+              <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+              <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
+              <application
+                  android:label="@string/app_name"
+                  android:theme="@style/AppTheme"
+                  android:allowBackup="true">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          BOUSSOLE_EOF
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/strings.xml <<'BOUSSOLE_EOF'
+          <resources>
+              <string name="app_name">Boussole GPS</string>
+          </resources>
+          BOUSSOLE_EOF
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/themes.xml <<'BOUSSOLE_EOF'
+          <resources>
+              <style name="AppTheme" parent="android:Theme.DeviceDefault.DayNight" />
+          </resources>
+          BOUSSOLE_EOF
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/colors.xml <<'BOUSSOLE_EOF'
+          <resources>
+              <color name="bg">#FFFFFF</color>
+              <color name="fg">#111111</color>
+              <color name="dial">#F0F2F5</color>
+              <color name="accent">#D32F2F</color>
+              <color name="muted">#7A7F87</color>
+          </resources>
+          BOUSSOLE_EOF
+          mkdir -p app/src/main/res/values-night
+          cat > app/src/main/res/values-night/colors.xml <<'BOUSSOLE_EOF'
+          <resources>
+              <color name="bg">#000000</color>
+              <color name="fg">#F2F2F2</color>
+              <color name="dial">#1E2125</color>
+              <color name="accent">#FF6B6B</color>
+              <color name="muted">#8A9099</color>
+          </resources>
+          BOUSSOLE_EOF
+          mkdir -p app/src/main/java/com/boussolgps/app
+          cat > app/src/main/java/com/boussolgps/app/CompassView.kt <<'BOUSSOLE_EOF'
+          package com.boussolgps.app
+          
+          import android.content.Context
+          import android.graphics.*
+          import android.view.View
+          import kotlin.math.*
+          
+          class CompassView(ctx: Context) : View(ctx) {
+              var heading = 0f
+                  set(v) { field = v; invalidate() }
+              var active = true
+                  set(v) { field = v; invalidate() }
+              var cDial = Color.LTGRAY; var cFg = Color.BLACK
+              var cAccent = Color.RED; var cMuted = Color.GRAY
+          
+              private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val path = Path()
+          
+              override fun onMeasure(w: Int, h: Int) {
+                  val s = MeasureSpec.getSize(w)
+                  setMeasuredDimension(s, s)
+              }
+          
+              override fun onDraw(c: Canvas) {
+                  val cx = width / 2f; val cy = height / 2f
+                  val r = min(width, height) / 2f * 0.94f
+                  p.style = Paint.Style.FILL; p.color = cDial
+                  c.drawCircle(cx, cy, r, p)
+                  p.style = Paint.Style.STROKE; p.strokeWidth = r * 0.025f; p.color = cFg
+                  c.drawCircle(cx, cy, r, p)
+                  for (a in 0 until 360 step 10) {
+                      val big = a % 90 == 0
+                      p.strokeWidth = if (big) r * 0.03f else r * 0.012f
+                      val len = if (big) r * 0.10f else r * 0.05f
+                      val rad = Math.toRadians(a.toDouble())
+                      val sx = cx + sin(rad).toFloat(); val sy = cy - cos(rad).toFloat()
+                      c.drawLine(cx + (sx - cx) * r * 0.97f, cy + (sy - cy) * r * 0.97f,
+                          cx + (sx - cx) * (r * 0.97f - len), cy + (sy - cy) * (r * 0.97f - len), p)
+                  }
+                  p.style = Paint.Style.FILL; p.textAlign = Paint.Align.CENTER
+                  p.textSize = r * 0.2f; p.typeface = Typeface.DEFAULT_BOLD
+                  val labels = arrayOf("N" to 0, "E" to 90, "S" to 180, "O" to 270)
+                  for ((t, a) in labels) {
+                      val rad = Math.toRadians(a.toDouble())
+                      val lx = cx + sin(rad).toFloat() * r * 0.74f
+                      val ly = cy - cos(rad).toFloat() * r * 0.74f + p.textSize * 0.35f
+                      p.color = if (t == "N") cAccent else cFg
+                      c.drawText(t, lx, ly, p)
+                  }
+                  c.save(); c.rotate(heading, cx, cy)
+                  path.reset()
+                  val w = r * 0.14f
+                  path.moveTo(cx, cy - r * 0.6f)
+                  path.lineTo(cx + w, cy + r * 0.15f)
+                  path.lineTo(cx, cy + r * 0.03f)
+                  path.lineTo(cx - w, cy + r * 0.15f)
+                  path.close()
+                  p.color = if (active) cAccent else cMuted
+                  c.drawPath(path, p)
+                  c.restore()
+                  p.color = cFg; c.drawCircle(cx, cy, r * 0.04f, p)
+              }
+          }
+          BOUSSOLE_EOF
+          mkdir -p app/src/main/java/com/boussolgps/app
+          cat > app/src/main/java/com/boussolgps/app/MainActivity.kt <<'BOUSSOLE_EOF'
+          package com.boussolgps.app
+          
+          import android.Manifest
+          import android.app.Activity
+          import android.content.pm.PackageManager
+          import android.location.Location
+          import android.location.LocationListener
+          import android.location.LocationManager
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.util.TypedValue
+          import android.view.Gravity
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import android.widget.TextView
+          import java.util.Calendar
+          import java.util.Locale
+          import java.util.TimeZone
+          import kotlin.math.*
+          
+          class MainActivity : Activity(), LocationListener {
+              private lateinit var lm: LocationManager
+              private lateinit var compass: CompassView
+              private lateinit var tvHeading: TextView
+              private lateinit var tvState: TextView
+              private lateinit var tvInfo: TextView
+              private lateinit var tvSun: TextView
+          
+              private val handler = Handler(Looper.getMainLooper())
+              private var last: Location? = null
+              private var prev: Location? = null
+              private var lastFixMs = 0L
+              private var shown = Float.NaN
+              private var knownHeading = Float.NaN
+              private var moving = false
+              private var running = false
+          
+              private val ticker = object : Runnable {
+                  override fun run() { refresh(); handler.postDelayed(this, 1000) }
+              }
+          
+              override fun onCreate(b: Bundle?) {
+                  super.onCreate(b)
+                  lm = getSystemService(LOCATION_SERVICE) as LocationManager
+                  val bg = getColor(R.color.bg); val fg = getColor(R.color.fg)
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL; setBackgroundColor(bg)
+                      setPadding(24, 24, 24, 24); gravity = Gravity.CENTER_HORIZONTAL
+                  }
+                  tvHeading = tv(56, true, fg)
+                  compass = CompassView(this).apply {
+                      cDial = getColor(R.color.dial); cFg = fg
+                      cAccent = getColor(R.color.accent); cMuted = getColor(R.color.muted)
+                  }
+                  tvState = tv(24, true, getColor(R.color.accent))
+                  tvInfo = tv(20, false, fg).apply { gravity = Gravity.START }
+                  tvSun = tv(16, false, getColor(R.color.muted))
+                  root.addView(tvHeading); root.addView(compass)
+                  root.addView(tvState); root.addView(tvInfo); root.addView(tvSun)
+                  setContentView(ScrollView(this).apply { setBackgroundColor(bg); addView(root) })
+                  window.statusBarColor = bg; window.navigationBarColor = bg
+                  refresh()
+              }
+          
+              private fun tv(sp: Int, bold: Boolean, color: Int) = TextView(this).apply {
+                  setTextSize(TypedValue.COMPLEX_UNIT_SP, sp.toFloat()); setTextColor(color)
+                  gravity = Gravity.CENTER; setPadding(0, 12, 0, 12)
+                  if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
+              }
+          
+              override fun onResume() {
+                  super.onResume()
+                  if (hasPerm()) start()
+                  else requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,
+                      Manifest.permission.ACCESS_COARSE_LOCATION), 1)
+                  handler.post(ticker)
+              }
+          
+              override fun onPause() {
+                  super.onPause(); handler.removeCallbacks(ticker)
+                  if (running) { lm.removeUpdates(this); running = false }
+              }
+          
+              override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
+                  super.onRequestPermissionsResult(rc, p, r)
+                  if (hasPerm()) start() else refresh()
+              }
+          
+              private fun hasPerm() = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
+                  PackageManager.PERMISSION_GRANTED
+          
+              private fun start() {
+                  if (running) return
+                  try {
+                      lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this, Looper.getMainLooper())
+                      running = true
+                  } catch (e: Exception) { running = false }
+              }
+          
+              override fun onLocationChanged(loc: Location) {
+                  last = loc; lastFixMs = System.currentTimeMillis()
+                  val speed = if (loc.hasSpeed()) loc.speed else 0f
+                  moving = speed >= 1.0f
+                  var h = Float.NaN
+                  if (moving && loc.hasBearing() &&
+                      (!loc.hasBearingAccuracy() || loc.bearingAccuracyDegrees <= 30f)) {
+                      h = loc.bearing
+                      prev = loc
+                  } else if (moving) {
+                      val pv = prev
+                      if (pv == null) prev = loc
+                      else if (pv.distanceTo(loc) >= max(8f, loc.accuracy)) {
+                          h = pv.bearingTo(loc); prev = loc
+                      }
+                  }
+                  if (!h.isNaN()) {
+                      h = (h + 360f) % 360f
+                      knownHeading = h
+                      shown = if (shown.isNaN()) h else {
+                          val d = ((h - shown + 540f) % 360f) - 180f
+                          (shown + d * 0.3f + 360f) % 360f
+                      }
+                  }
+                  refresh()
+              }
+          
+              override fun onProviderEnabled(p: String) { refresh() }
+              override fun onProviderDisabled(p: String) { refresh() }
+              @Deprecated("Deprecated in Java")
+              override fun onStatusChanged(p: String?, s: Int, e: Bundle?) {}
+          
+              private fun dir(h: Float): String {
+                  val n = arrayOf("N", "NE", "E", "SE", "S", "SO", "O", "NO")
+                  return n[((h + 22.5f) / 45f).toInt() % 8]
+              }
+          
+              private fun refresh() {
+                  val l = last
+                  val age = if (lastFixMs == 0L) Long.MAX_VALUE else System.currentTimeMillis() - lastFixMs
+                  val gpsOn = lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
+                  val lost = age > 10000
+                  val signal = when {
+                      !hasPerm() -> "Autorisation GPS refusÃ©e"
+                      !gpsOn -> "GPS dÃ©sactivÃ© : activez la localisation"
+                      l == null -> "Recherche du signal GPSâ€¦"
+                      lost -> "Signal perdu"
+                      l.accuracy <= 15f -> "Bon"
+                      l.accuracy <= 40f -> "Moyen"
+                      else -> "Faible"
+                  }
+                  val live = moving && !lost && !shown.isNaN()
+                  if (!shown.isNaN()) compass.heading = shown
+                  compass.active = live
+                  tvHeading.text = if (knownHeading.isNaN()) "--Â°"
+                      else String.format(Locale.FRANCE, "%.0fÂ° %s", shown.takeIf { !it.isNaN() } ?: knownHeading, dir(knownHeading))
+                  tvState.text = when {
+                      knownHeading.isNaN() -> "Marchez pour obtenir la direction"
+                      live -> "En mouvement"
+                      else -> "Ã€ l'arrÃªt\nDerniÃ¨re direction connue"
+                  }
+                  val moveTxt = if (l == null || lost) "â€”" else if (moving) "En mouvement" else "Ã€ l'arrÃªt"
+                  tvInfo.text = if (l == null) "Signal GPS : $signal" else String.format(Locale.FRANCE,
+                      "Latitude : %.5f\nLongitude : %.5f\nVitesse : %.1f km/h\nPrÃ©cision : %.0f m\nCap : %s\nSignal GPS : %s\nÃ‰tat : %s",
+                      l.latitude, l.longitude, (if (l.hasSpeed()) l.speed else 0f) * 3.6f, l.accuracy,
+                      if (knownHeading.isNaN()) "--" else String.format(Locale.FRANCE, "%.0fÂ°", knownHeading),
+                      signal, moveTxt)
+                  tvSun.text = if (l != null && !live) sunText(l) else ""
+              }
+          
+              // Azimut approximatif du Soleil (indicatif, +/- quelques degrÃ©s)
+              private fun sunText(l: Location): String {
+                  val c = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+                  val n = c.get(Calendar.DAY_OF_YEAR)
+                  val utc = c.get(Calendar.HOUR_OF_DAY) + c.get(Calendar.MINUTE) / 60.0
+                  val dec = Math.toRadians(23.45 * sin(Math.toRadians(360.0 / 365.0 * (284 + n))))
+                  val bb = Math.toRadians(360.0 / 365.0 * (n - 81))
+                  val eot = 9.87 * sin(2 * bb) - 7.53 * cos(bb) - 1.5 * sin(bb)
+                  val solar = utc + l.longitude / 15.0 + eot / 60.0
+                  val ha = Math.toRadians(15.0 * (solar - 12.0))
+                  val lat = Math.toRadians(l.latitude)
+                  val el = Math.toDegrees(asin(sin(lat) * sin(dec) + cos(lat) * cos(dec) * cos(ha)))
+                  if (el < 0) return "Soleil sous l'horizon (orientation indisponible)"
+                  val az = (Math.toDegrees(atan2(sin(ha), cos(ha) * sin(lat) - tan(dec) * cos(lat))) + 180 + 360) % 360
+                  return String.format(Locale.FRANCE,
+                      "Indication approximative (non mesurÃ©e) : le Soleil est vers %.0fÂ° (%s). Si vous le voyez, ce cap est une estimation, pas une mesure.",
+                      az, dir(az.toFloat()))
+              }
+          }
+          BOUSSOLE_EOF
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+      - run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BoussoleGPS-APK
+          path: app/build/outputs/apk/debug/*.apk
